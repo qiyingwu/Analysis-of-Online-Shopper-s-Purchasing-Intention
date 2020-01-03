@@ -1,0 +1,116 @@
+shoppers = read.table("https://archive.ics.uci.edu/ml/machine-learning-databases/00468/online_shoppers_intention.csv",sep=',',header = T)
+shoppers$Revenue = as.factor(shoppers$Revenue)
+library(tree)
+library(randomForest)
+library(gbm)
+library(glm2)
+library(ggplot2)
+library(e1071)
+library(GGally)
+library(rpart)
+
+#data visualization
+ggplot(shoppers,aes(x=Revenue,y=PageValues))+geom_boxplot()
+ggplot(shoppers,aes(x=Revenue,y=BounceRates))+geom_boxplot()
+shoppers %>% select(Month,Revenue) %>% group_by(Month) %>% count(Revenue)%>%
+  ggplot(aes(Month,n,fill=Revenue))+geom_bar(stat="identity")
+
+#Split data into training and testing
+set.seed(100)
+n=sample(nrow(shoppers),8000)
+train = shoppers[n,]
+test = shoppers[-n,]
+
+#Decision Tree
+set.seed(100)
+shop_tree = tree(Revenue ~ ., data = train)
+par(xpd = TRUE)
+plot(shop_tree, compress = TRUE)
+text(shop_tree, use.n = TRUE)
+predict_tree = predict(shop_tree,test,type = 'class')
+tree_error =  mean(predict_tree != test$Revenue)
+table(ifelse(predict_tree==TRUE,'Yes',"No"),ifelse(test$Revenue==TRUE,'Yes',"No"))
+
+
+#RandomForest
+set.seed(100)
+shop_rf = randomForest(Revenue ~ ., data = train, importance = T)
+predict_rf = predict(shop_rf,test,type = 'class')
+rf_error = mean(test$Revenue != predict_rf)
+varImpPlot(shop_rf)
+
+#Boost
+set.seed(100)
+train_b = train
+test_b = test
+train_b$Weekend = as.factor(ifelse(train$Weekend == TRUE,1,0))
+test_b$Weekend = as.factor(ifelse(test_b$Weekend == TRUE,1,0))
+train_b$Revenue = ifelse(train$Revenue == TRUE,1,0)
+test_b$Revenue = ifelse(test_b$Revenue == TRUE,1,0)
+lambdas = 10 ^ seq(-10, -0.1, by = 0.05)
+test_error <- rep(0, length(lambdas))
+for (i in 1:length(lambdas)) {
+  shop_boost = gbm(Revenue~.,data = train_b,n.trees=500,distribution = 'bernoulli',shrinkage =lambdas[i])
+  yhat_boost = predict(shop_boost, test_b, n.trees = 500,type='response')
+  predict_boost=ifelse(yhat_boost>0.6,1,0)
+  test_error[i] = mean(predict_boost != test_b$Revenue)
+  print(i)
+}
+plot(lambdas, test_error, type = "b", xlab = "Shrinkage values", ylab = "Test Error")
+
+l = lambdas[which.min(test_error)]
+shop_boost = gbm(Revenue~.,data = train_b,n.trees=1000,distribution = 'bernoulli',shrinkage = l)
+yhat_boost=predict(shop_boost,newdata=test_b, n.trees=500,type='response')
+predict_boost=ifelse(yhat_boost>0.6,1,0)
+boost_error = mean(predict_boost != test_b$Revenue)
+
+#Neural Network
+
+library(caret)
+library(nnet)
+library(MASS)
+library(neuralnet)
+library(tidyverse)
+library(nnet)
+shoppers = read.table("https://archive.ics.uci.edu/ml/machine-learning-databases/00468/online_shoppers_intention.csv",sep=',',header = T)
+scale01 <- function(x){
+  (x - min(x)) / (max(x) - min(x))
+}
+
+n_d <- shoppers %>%
+  mutate(Administrative = scale01(Administrative), 
+         Administrative_Duration = scale01(Administrative_Duration), 
+         Informational = scale01(Informational),
+         Informational_Duration = scale01(Informational_Duration),
+         ProductRelated_Duration = scale01(ProductRelated_Duration),
+         BounceRates = scale01(BounceRates),
+         ProductRelated = scale01(ProductRelated),
+         PageValues  = scale01(PageValues ),
+         SpecialDay = scale01(SpecialDay),
+         #Month = class.ind(Month),
+         Browser = scale01(Browser),
+         Region = scale01(Region),
+         TrafficType = scale01(TrafficType),
+         #Weekend = class.ind(Weekend),
+         ExitRates = scale01(ExitRates),
+         #VisitorType = class.ind(VisitorType),
+         OperatingSystems = scale01(OperatingSystems))
+
+ideal <- class.ind(n_d$Revenue)
+set.seed(100)
+n = nnet(n_d[,c(1:10,12:15)], ideal,size=15)
+source_url('https://gist.githubusercontent.com/fawda123/7471137/raw/466c1474d0a505ff044412703516c34f1a4684a5/nnet_plot_update.r')
+par(xpd = TRUE)
+plot.nnet(n)
+p = predict(n,n_d[,c(1:10,12:15)])
+length(which(apply(n$fitted.values,1,which.max)-1 != as.numeric(n_d$Revenue)-1))/12330
+
+e = rep(0,21)
+for(i in 5:25){
+  n = nnet(n_d[,c(1:10,12:15)], ideal,size = i)
+  e[i]=length(which(apply(n$fitted.values,1,which.max)-1 != as.numeric(n_d$Revenue)-1))/12330
+}
+n = nnet(n_d[,c(1:10,12:15)], ideal,size = 5)
+
+
+
